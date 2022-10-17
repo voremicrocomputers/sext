@@ -24,6 +24,7 @@ pub struct TextRenderer<T> {
 /// less memory copying was required for SDL2 surfaces. It is thus recommended that you do not copy the raw glyph data,
 /// and instead attempt to borrow it within your `DrawableSurface` implementation. (which we didn't do in our test implementation cause we were lazy)
 #[derive(Clone)]
+#[allow(dead_code)] // listen i'll use it at some point okay!
 struct GlyphCache<T> {
     pub size: f32,
     pub surface_map: HashMap<TextColour, HashMap<char, (Vec<u8>, T)>>,
@@ -56,7 +57,7 @@ pub enum TextRendererError {
 /// Internal function to convert the fontdue grayscale bitmaps to our superior RGBA bitmaps
 fn cache_glyph<T>(font: Arc<Font>, glyph: GlyphPosition, colour: TextColour, make_t: impl FnOnce(&[u8]) -> T) -> (Vec<u8>, T) {
     debug!("caching glyph: {:?}", glyph);
-    let (metrics, mut bitmap) = font.rasterize_config(glyph.key);
+    let (_metrics, mut bitmap) = font.rasterize_config(glyph.key);
     let mut coloured_pixels = Vec::new();
     for pixel in bitmap.iter_mut() {
         coloured_pixels.push(colour.r); // u8
