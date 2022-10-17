@@ -1,0 +1,17 @@
+[package]
+name = "sext"
+description = "the real microsoft text rendering backend! powered by fontdue and my eternal suffering"
+version = "0.1.0"
+edition = "2021"
+authors = ["Real Microsoft", "husky (fekhesk)"]
+homepage = "https://github.com/realmicrosoft/sext"
+repository = "https://github.com/realmicrosoft/sext"
+license = "Apache-2.0"
+readme = "README.md"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+log = "0.4.17"
+env_logger = "0.9.1"
+fontdue = "0.7.2"
