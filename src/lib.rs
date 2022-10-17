@@ -9,6 +9,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use log::debug;
 
+/// The main text renderer struct, which holds a single font and its cache.
+/// Try not to clone this as it may end up containing a large amount of data.
+/// Instead, you might want to wrap this in an `Arc` or some other pointer type.
 #[derive(Clone)]
 pub struct TextRenderer<T> {
     pub font: Arc<Font>,
@@ -16,22 +19,41 @@ pub struct TextRenderer<T> {
     glyph_caches: HashMap<u16, GlyphCache<T>>,
 }
 
+/// Internal struct, contains a `HashMap` of `TextColour` to a `HashMap` of `char` to (raw glyph data, `DrawableSurface`).
+/// This is because, historically as SDL2 surfaces were used, it was important to keep the raw glyph data alive so that
+/// less memory copying was required for SDL2 surfaces. It is thus recommended that you do not copy the raw glyph data,
+/// and instead attempt to borrow it within your `DrawableSurface` implementation. (which we didn't do in our test implementation cause we were lazy)
 #[derive(Clone)]
 struct GlyphCache<T> {
     pub size: f32,
     pub surface_map: HashMap<TextColour, HashMap<char, (Vec<u8>, T)>>,
 }
 
+/// A "surface" that you can draw pixels to.
+/// Historically, this was an SDL2 surface, but it has been abstracted out to allow for other backends.
 pub trait DrawableSurface {
+    /// This function will be called to "paste" a glyph upon the surface.
+    /// The `x` and `y` coordinates are where the top left of the glyph should be pasted.
+    /// The `width` and `height` are the dimensions of the area that the glyph should be rendered.
+    /// KEEP IN MIND THAT THIS MAY NOT BE THE SAME AS THE ACTUAL GLYPH DIMENSIONS.
+    /// `data` is in reference to another `DrawableSurface` that contains the glyph data.
     fn paste(&mut self, x: usize, y: usize, width: usize, height: usize, data: &Self);
+    /// This function takes in raw RGBA bytes and creates a `DrawableSurface` from them.
+    /// The `width` and `height` are the dimensions of the surface.
+    /// The `data` parameter is a slice of bytes that contains the RGBA data.
+    /// The `colour` parameter is a `TextColour` that will be used to colour the surface.
+    /// There is little reason to actually care about the `colour` parameter, as it is only used for caching.
+    /// Check the tests section of this library for an example of how to use this function.
     fn from_raw_mask(width: usize, height: usize, data: &[u8], colour: TextColour) -> Self;
 }
 
+/// Enum for the different (1) possible errors that you could get while constructing a TextRenderer.
 #[derive(Debug, Clone, Copy)]
 pub enum TextRendererError {
     FontNotFound,
 }
 
+/// Internal function to convert the fontdue grayscale bitmaps to our superior RGBA bitmaps
 fn cache_glyph<T>(font: Arc<Font>, glyph: GlyphPosition, colour: TextColour, make_t: impl FnOnce(&[u8]) -> T) -> (Vec<u8>, T) {
     debug!("caching glyph: {:?}", glyph);
     let (metrics, mut bitmap) = font.rasterize_config(glyph.key);
@@ -48,6 +70,9 @@ fn cache_glyph<T>(font: Arc<Font>, glyph: GlyphPosition, colour: TextColour, mak
 }
 
 impl<T> TextRenderer<T> where T: DrawableSurface, T: Clone {
+    /// Loads a font from a specified path and creates a `TextRenderer` instance.
+    /// Will return `TextRendererError::FontNotFound` if the font could not be found.
+    /// Will also return a `TextRendererError::FontNotFound` if the font could not be loaded, because i haven't added other errors yet.
     pub fn load(font_path: &str) -> Result<Self, TextRendererError> {
         let font_data = std::fs::read(font_path).map_err(|_| TextRendererError::FontNotFound)?;
         let font = Font::from_bytes(font_data, FontSettings::default())
@@ -59,6 +84,10 @@ impl<T> TextRenderer<T> where T: DrawableSurface, T: Clone {
             glyph_caches: HashMap::new(),
         })
     }
+
+    /// Same as `draw_string`, but forces each character to be rendered at the same width.
+    /// This can cause some minor visual artifacts, but is useful for some cases where i'm lazy.
+    /// Notable warning: this will currently cause each character to have a kerning of 0.
     pub fn draw_string_monospaced(
         &mut self,
         string: &str,
@@ -88,6 +117,9 @@ impl<T> TextRenderer<T> where T: DrawableSurface, T: Clone {
         }
     }
 
+    /// Draws a string using the default settings and fontdue's layout engine.
+    /// In the future, this will probably have added systems for typesetting, but for now you'll have
+    /// to live without being able to set the kerning of your text.
     pub fn draw_string(
         &mut self,
         string: &str,
@@ -117,6 +149,7 @@ impl<T> TextRenderer<T> where T: DrawableSurface, T: Clone {
         }
     }
 
+    /// Internal function to get the glyph drawable from either the cache or the font
     fn get_glyph_surface(
         &mut self,
         glpyh: GlyphPosition,
