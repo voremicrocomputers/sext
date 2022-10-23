@@ -12,11 +12,14 @@ use log::debug;
 /// The main text renderer struct, which holds a single font and its cache.
 /// Try not to clone this as it may end up containing a large amount of data.
 /// Instead, you might want to wrap this in an `Arc` or some other pointer type.
+/// Type parameter `G` refers to the type that will store glyph data.
+/// Type parameter `A` refers to the type that glyph data will be drawn onto.
 #[derive(Clone)]
-pub struct TextRenderer<T> {
+pub struct TextRenderer<G, A> {
     pub font: Arc<Font>,
     pub layout: Arc<Layout>,
-    glyph_caches: HashMap<u16, GlyphCache<T>>,
+    glyph_caches: HashMap<u16, GlyphCache<G>>,
+    phantom: std::marker::PhantomData<A>,
 }
 
 /// Internal struct, contains a `HashMap` of `TextColour` to a `HashMap` of `char` to (raw glyph data, `DrawableSurface`).
@@ -32,14 +35,21 @@ struct GlyphCache<T> {
 
 /// A "surface" that you can draw pixels to.
 /// Historically, this was an SDL2 surface, but it has been abstracted out to allow for other backends.
-pub trait DrawableSurface {
+/// The generic `D` is the type of the object that contains the glyph data, usually something that implements StoreSurface.
+pub trait PasteSurface<D> {
     /// This function will be called to "paste" a glyph upon the surface.
     /// The `x` and `y` coordinates are where the top left of the glyph should be pasted.
     /// The `width` and `height` are the dimensions of the area that the glyph should be rendered.
     /// KEEP IN MIND THAT THIS MAY NOT BE THE SAME AS THE ACTUAL GLYPH DIMENSIONS.
-    /// `data` is in reference to another `DrawableSurface` that contains the glyph data.
-    fn paste(&mut self, x: usize, y: usize, width: usize, height: usize, data: &Self);
-    /// This function takes in raw RGBA bytes and creates a `DrawableSurface` from them.
+    /// `data` is *usually* in reference to another `DrawableSurface` that contains the glyph data.
+    /// however, in some cases, it may reference something else which is why we have the `D` generic.
+    fn paste(&mut self, x: usize, y: usize, width: usize, height: usize, data: &D);
+}
+
+/// A "surface" for storing glyph data.
+/// Historically this was the same as PasteSurface, but it has been abstracted out to allow for other backends.
+pub trait StoreSurface {
+    /// This function takes in raw RGBA bytes and creates a `StoreSurface` from them.
     /// The `width` and `height` are the dimensions of the surface.
     /// The `data` parameter is a slice of bytes that contains the RGBA data.
     /// The `colour` parameter is a `TextColour` that will be used to colour the surface.
@@ -70,7 +80,7 @@ fn cache_glyph<T>(font: Arc<Font>, glyph: GlyphPosition, colour: TextColour, mak
     (coloured_pixels, t)
 }
 
-impl<T> TextRenderer<T> where T: DrawableSurface, T: Clone {
+impl<G, A> TextRenderer<G, A> where A: PasteSurface<G>, G: StoreSurface, G: Clone {
     /// Loads a font from a specified path and creates a `TextRenderer` instance.
     /// Will return `TextRendererError::FontNotFound` if the font could not be found.
     /// Will also return a `TextRendererError::FontNotFound` if the font could not be loaded, because i haven't added other errors yet.
@@ -83,6 +93,7 @@ impl<T> TextRenderer<T> where T: DrawableSurface, T: Clone {
             font: Arc::new(font),
             layout: Arc::new(layout),
             glyph_caches: HashMap::new(),
+            phantom: Default::default()
         })
     }
 
@@ -96,7 +107,7 @@ impl<T> TextRenderer<T> where T: DrawableSurface, T: Clone {
         y: f32,
         size: f32,
         colour: TextColour,
-        surface: &mut T
+        surface: &mut A
     ) {
         let mut layout_settings = LayoutSettings::default();
         layout_settings.x = x;
@@ -128,7 +139,7 @@ impl<T> TextRenderer<T> where T: DrawableSurface, T: Clone {
         y: f32,
         size: f32,
         colour: TextColour,
-        surface: &mut T
+        surface: &mut A
     ) {
         let mut layout_settings = LayoutSettings::default();
         layout_settings.x = x;
@@ -157,7 +168,7 @@ impl<T> TextRenderer<T> where T: DrawableSurface, T: Clone {
         width: usize,
         height: usize,
         colour: TextColour,
-    ) -> T {
+    ) -> G {
         let size = height as u16;
         // check if glyph cache exists
         // if not create it
@@ -175,7 +186,7 @@ impl<T> TextRenderer<T> where T: DrawableSurface, T: Clone {
         // if not create it
         let colour_map = glyph_cache.surface_map.get_mut(&colour).unwrap();
         if let std::collections::hash_map::Entry::Vacant(e) = colour_map.entry(glpyh.parent) {
-            e.insert(cache_glyph(self.font.clone(), glpyh, colour, |data| T::from_raw_mask(width, height, data, colour)));
+            e.insert(cache_glyph(self.font.clone(), glpyh, colour, |data| G::from_raw_mask(width, height, data, colour)));
         }
         // get glyph surface
         let glyph_surface = colour_map.get(&glpyh.parent).unwrap();
@@ -196,7 +207,7 @@ mod tests {
         data: Vec<u8>,
     }
 
-    impl DrawableSurface for TestSurface {
+    impl PasteSurface<Self> for TestSurface {
         fn paste(&mut self, x: usize, y: usize, width: usize, height: usize, data: &Self) {
             println!("paste: x: {}, y: {}, width: {}, height: {}, data: {:?}", x, y, width, height, data);
             // data contains an rgba bitmap
@@ -224,6 +235,9 @@ mod tests {
                 data_index += data_pitch - (width as i32 * 4);
             }
         }
+    }
+
+    impl StoreSurface for TestSurface {
         // data is rgba
         fn from_raw_mask(width: usize, height: usize, data: &[u8], colour: TextColour) -> Self {
             println!("from_raw_mask");
@@ -246,7 +260,7 @@ mod tests {
             height: 256,
             data: vec![0; 256 * 256 * 4],
         };
-        renderer.draw_string_monospaced("hElLo w0r1d!", 0.0, 0.0, 24.0, TextColour::new_rgb(255, 255, 255), &mut surface);
+        renderer.draw_string_monospaced("hElLo w0r1d! hai!!", 0.0, 0.0, 24.0, TextColour::new_rgb(255, 255, 255), &mut surface);
         renderer.draw_string("hElLo w0r1d!", 0.0, 24.0, 24.0, TextColour::new_rgb(255, 255, 255), &mut surface);
         // convert from rgba to rgb
         let mut rgb_data = Vec::new();
